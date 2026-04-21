@@ -3,6 +3,43 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import json
+import os
+import datetime
+
+# ══════════════════════════════════════════════════════════════
+#  ANTHROPIC API  ── Set ANTHROPIC_API_KEY in secrets.toml
+# ══════════════════════════════════════════════════════════════
+import anthropic
+
+def get_claude_response(api_key: str, prompt: str, system: str = None) -> str:
+    """Call Claude via Anthropic API and return response text."""
+    client = anthropic.Anthropic(api_key=api_key)
+    kwargs = dict(
+        model="claude-sonnet-4-5",
+        max_tokens=1200,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    if system:
+        kwargs["system"] = system
+    response = client.messages.create(**kwargs)
+    return response.content[0].text
+
+def _load_claude_key():
+    try:
+        return st.secrets.get("ANTHROPIC_API_KEY", "")
+    except Exception:
+        return os.environ.get("ANTHROPIC_API_KEY", "")
+
+# Load API key at global scope so all tabs can access it
+ANTHROPIC_API_KEY = _load_claude_key()
+
+def _load_claude_key_old():
+    # Try secrets.toml first, then environment variable
+    try:
+        return st.secrets.get("ANTHROPIC_API_KEY", "")
+    except Exception:
+        return os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ══════════════════════════════════════════════════════════════
 #  PAGE CONFIG  ── must be the very first Streamlit call
@@ -17,35 +54,30 @@ st.set_page_config(
 # ══════════════════════════════════════════════════════════════
 #  DESIGN TOKENS  —  Light theme, vivid accent palette
 # ══════════════════════════════════════════════════════════════
-# ── page / surface colours ────────────────────────────────────
-BG_PAGE    = "#F5F6FA"   # page background — off-white
-BG_CARD    = "#FFFFFF"   # card / chart background — pure white
-BG_SURFACE = "#ECEDF3"   # sidebar, slightly raised surface
-BG_BORDER  = "#D4D5E0"   # 1-px border colour
+BG_PAGE    = "#F5F6FA"
+BG_CARD    = "#FFFFFF"
+BG_SURFACE = "#ECEDF3"
+BG_BORDER  = "#D4D5E0"
 
-# ── text colours (dark on light) ──────────────────────────────
-TXT_WHITE  = "#1A1B2E"   # headings — near-black (replaces white)
-TXT_BODY   = "#3A3B50"   # body / axis tick text — dark grey
-TXT_MUTED  = "#6B6C80"   # captions, secondary info
+TXT_WHITE  = "#1A1B2E"
+TXT_BODY   = "#3A3B50"
+TXT_MUTED  = "#6B6C80"
 
-# ── accent palette — KEPT EXACTLY THE SAME vivid colours ──────
-GOLD       = "#E5B94E"   # Porsche gold  → targets / highlights
-CYAN       = "#0AABCC"   # electric cyan (slightly deeper for light bg)
-VIOLET     = "#7C3AED"   # violet        → dividends (deeper for contrast)
-CORAL      = "#EF4444"   # coral-red     → capital gains / other
-SAGE       = "#16A34A"   # sage-green    → wages (deeper green)
-MUTED_DOT  = "#6B7FD4"   # non-target scatter dots — indigo-blue
+GOLD       = "#E5B94E"
+CYAN       = "#0AABCC"
+VIOLET     = "#7C3AED"
+CORAL      = "#EF4444"
+SAGE       = "#16A34A"
+MUTED_DOT  = "#6B7FD4"
 
-# ── chart infrastructure ──────────────────────────────────────
-GRID_CLR   = "#E8E9F0"   # light grey gridlines
+GRID_CLR   = "#E8E9F0"
 PAPER_BG   = "rgba(0,0,0,0)"
 
-# ── categorical sequences (lines, multi-series) ───────────────
 QUALITATIVE = [GOLD, CYAN, VIOLET, CORAL, SAGE,
                "#F97316", "#2563EB", "#DB2777", "#D97706", "#059669"]
 
 # ══════════════════════════════════════════════════════════════
-#  GLOBAL CSS  ── light theme with vivid accent colours
+#  GLOBAL CSS
 # ══════════════════════════════════════════════════════════════
 st.markdown(f"""
 <style>
@@ -174,11 +206,113 @@ hr {{ border-color: {BG_BORDER} !important; }}
     margin-right: 5px;
     vertical-align: middle;
 }}
+
+/* ── AI chat message bubbles ────────────────────────────────── */
+.chat-user {{
+    background: linear-gradient(135deg, #1A1B2E 0%, #2D2E4A 100%);
+    color: #FFFFFF !important;
+    border-radius: 18px 18px 4px 18px;
+    padding: 12px 18px;
+    margin: 8px 0 8px 60px;
+    font-size: 14px;
+    line-height: 1.6;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}}
+.chat-ai {{
+    background: {BG_CARD};
+    border: 1px solid {BG_BORDER};
+    border-left: 3px solid {GOLD};
+    border-radius: 4px 18px 18px 18px;
+    padding: 14px 18px;
+    margin: 8px 60px 8px 0;
+    font-size: 14px;
+    line-height: 1.7;
+    color: {TXT_BODY};
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}}
+.chat-ai strong {{ color: #9A6E00; }}
+.chat-ai code {{
+    background: {BG_SURFACE};
+    color: #0077AA;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+}}
+
+/* ── prompt starter chips ───────────────────────────────────── */
+.prompt-chip {{
+    display: inline-block;
+    background: {BG_SURFACE};
+    border: 1px solid {BG_BORDER};
+    border-radius: 20px;
+    padding: 6px 14px;
+    margin: 4px;
+    font-size: 13px;
+    color: {TXT_BODY};
+    cursor: pointer;
+    transition: all 0.2s;
+}}
+.prompt-chip:hover {{
+    border-color: {GOLD};
+    color: #9A6E00;
+    background: #FFFBF0;
+}}
+
+/* ── AI badge ───────────────────────────────────────────────── */
+.ai-badge {{
+    display: inline-block;
+    background: linear-gradient(135deg, {GOLD} 0%, #F0A500 100%);
+    color: #1A1B2E !important;
+    border-radius: 12px;
+    padding: 3px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-left: 10px;
+    vertical-align: middle;
+}}
+
+/* ── report card ────────────────────────────────────────────── */
+.report-card {{
+    background: {BG_CARD};
+    border: 1px solid {BG_BORDER};
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin: 16px 0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    line-height: 1.8;
+}}
+.report-card h2 {{
+    color: #9A6E00 !important;
+    border-bottom: 2px solid {GOLD};
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+}}
+.report-card h3 {{
+    color: {TXT_WHITE} !important;
+    margin-top: 20px;
+}}
+
+/* ── phase2 badge ───────────────────────────────────────────── */
+.phase2-badge {{
+    display: inline-block;
+    background: linear-gradient(135deg, {CYAN} 0%, {VIOLET} 100%);
+    color: #fff !important;
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-left: 8px;
+    vertical-align: middle;
+}}
 </style>
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════
-#  PLOTLY BASE LAYOUT  ── called by every chart
+#  PLOTLY BASE LAYOUT
 # ══════════════════════════════════════════════════════════════
 def base_layout(height=400, **extra):
     layout = dict(
@@ -265,9 +399,31 @@ def load_data():
     agg["wealth_score"]  = (agg["passive_ratio"] * 0.5 + agg["agi_norm"] * 0.5).round(4)
     agg["lat"] = agg["zipcode"].map(lambda z: ZIP_COORDS.get(z,(np.nan,np.nan))[0])
     agg["lon"] = agg["zipcode"].map(lambda z: ZIP_COORDS.get(z,(np.nan,np.nan))[1])
+
+    # ── Stability score: mean passive ratio / (1 + std dev) across years ──
+    stability = df.groupby("zipcode")["passive_ratio"].agg(
+        stability_mean="mean",
+        stability_std="std"
+    ).reset_index()
+    stability["stability_std"] = stability["stability_std"].fillna(0)
+    stability["stability_score"] = (
+        stability["stability_mean"] / (1 + stability["stability_std"])
+    ).round(4)
+    agg = agg.merge(stability, on="zipcode", how="left")
+
     return df, agg
 
 df_yearly, df_agg = load_data()
+
+# ══════════════════════════════════════════════════════════════
+#  SESSION STATE INIT
+# ══════════════════════════════════════════════════════════════
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "report_content" not in st.session_state:
+    st.session_state.report_content = None
+if "report_generated" not in st.session_state:
+    st.session_state.report_generated = False
 
 # ══════════════════════════════════════════════════════════════
 #  SIDEBAR
@@ -287,6 +443,40 @@ with st.sidebar:
         help="Minimum 4-year average Adjusted Gross Income (thousands)"
     )
     top_n = st.slider("Top N ZIPs in rankings", 5, 30, 15, 5)
+
+    st.divider()
+
+    # ── AI API Key input ───────────────────────────────────────
+    st.markdown(
+        f"<p style='color:{TXT_MUTED};font-size:12px;font-weight:600;"
+        f"text-transform:uppercase;letter-spacing:.07em;'>🤖 Anthropic API Key</p>",
+        unsafe_allow_html=True
+    )
+
+    # Load from secrets first, allow manual override
+    ANTHROPIC_API_KEY = _load_claude_key()
+
+    user_key = st.text_input(
+        "Enter API Key",
+        value="",
+        type="password",
+        placeholder="sk-ant-…",
+        help="Get your key at console.anthropic.com",
+        key="api_key_input"
+    )
+    if user_key.strip():
+        ANTHROPIC_API_KEY = user_key.strip()
+
+    if ANTHROPIC_API_KEY:
+        st.markdown(
+            f"<p style='color:{SAGE};font-size:12px;'>✅ AI features active</p>",
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            f"<p style='color:{CORAL};font-size:12px;'>⚠️ Enter key to enable AI</p>",
+            unsafe_allow_html=True
+        )
 
     st.divider()
     st.markdown(f"<p style='color:{TXT_MUTED};font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;'>Data Fields</p>",
@@ -332,7 +522,7 @@ st.markdown(
 st.divider()
 
 # ══════════════════════════════════════════════════════════════
-#  KPI CARDS
+#  KPI CARDS  (with sparkline mini-trend)
 # ══════════════════════════════════════════════════════════════
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Total ZIP Codes",   f"{len(df_agg):,}",               "nationwide")
@@ -344,10 +534,31 @@ k4.metric("Highest Avg AGI",   f"${df_agg['avg_agi'].max()/1e6:.1f}M",
 k5.metric("Top Wealth Score",  f"{df_agg['wealth_score'].max():.3f}",
           f"ZIP {int(df_agg.loc[df_agg['wealth_score'].idxmax(),'zipcode'])}")
 
+# ── Sparkline trend bar (AGI trend 2019→2022 for top ZIP) ────
+top_zip = int(df_agg.loc[df_agg["wealth_score"].idxmax(), "zipcode"])
+sparkline_df = df_yearly[df_yearly["zipcode"] == top_zip].sort_values("year") if len(df_yearly[df_yearly["zipcode"] == top_zip]) > 0 else None
+if sparkline_df is not None and len(sparkline_df) > 1:
+    spark_fig = go.Figure(go.Scatter(
+        x=sparkline_df["year"].tolist(),
+        y=(sparkline_df["a00100"] / 1e6).tolist(),
+        mode="lines+markers",
+        line=dict(color=GOLD, width=2),
+        marker=dict(size=5, color=GOLD),
+        fill="tozeroy",
+        fillcolor=f"rgba(229,185,78,0.15)",
+    ))
+    spark_fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=0, r=0, t=0, b=0), height=60, showlegend=False,
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+    )
+    with k5:
+        st.plotly_chart(spark_fig, use_container_width=True, config={"displayModeBar": False})
+
 st.divider()
 
 # ══════════════════════════════════════════════════════════════
-#  COLOUR LEGEND  (helps readers decode charts)
+#  COLOUR LEGEND
 # ══════════════════════════════════════════════════════════════
 legend_html = (
     f"<div style='display:flex;gap:24px;flex-wrap:wrap;align-items:center;"
@@ -359,7 +570,7 @@ legend_html = (
     f"<span><span class='legend-pill' style='background:{VIOLET}'></span><span style='color:{TXT_BODY};font-size:13px;'>Dividends</span></span>"
     f"<span><span class='legend-pill' style='background:{CORAL}'></span><span style='color:{TXT_BODY};font-size:13px;'>Capital gains / Other</span></span>"
     f"<span><span class='legend-pill' style='background:{SAGE}'></span><span style='color:{TXT_BODY};font-size:13px;'>Wages</span></span>"
-    f"<span><span class='legend-pill' style='background:{MUTED_DOT}'></span><span style='color:{TXT_BODY};font-size:13px;'>Non-target ZIPs (steel blue)</span></span>"
+    f"<span><span class='legend-pill' style='background:{MUTED_DOT}'></span><span style='color:{TXT_BODY};font-size:13px;'>Non-target ZIPs</span></span>"
     f"</div>"
 )
 st.markdown(legend_html, unsafe_allow_html=True)
@@ -367,19 +578,19 @@ st.markdown(legend_html, unsafe_allow_html=True)
 # ══════════════════════════════════════════════════════════════
 #  TABS
 # ══════════════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊  Passive Wealth Analysis",
-    "📈  Trends 2019–2022",
+    "📈  Phase 2 — Trends & Stability",
     "🗺️  Geographic Map",
     "🏆  Top Target ZIPs",
+    "🤖  AI Analyst",
+    "📄  Site Report",
 ])
 
 # ╔══════════════════════════════════════════════════════════════
 # ║  TAB 1 — Passive Wealth Analysis
 # ╚══════════════════════════════════════════════════════════════
 with tab1:
-
-    # ── Scatter + Bar side-by-side ─────────────────────────────
     col_l, col_r = st.columns([3, 2], gap="medium")
 
     with col_l:
@@ -404,13 +615,11 @@ with tab1:
             hover_data={"zipcode":True,"ratio_pct":":.1f","agi_k":":,.0f","category":False},
             labels={"ratio_pct":"Passive Ratio (%)","agi_k":"Avg AGI ($k)","zipcode":"ZIP"},
         )
-        # Target dots: large gold with white ring
         fig_sc.update_traces(
             selector=dict(name="Target ZIP"),
             marker=dict(size=10, opacity=1.0,
                         line=dict(width=1.5, color="rgba(255,255,255,0.6)")),
         )
-        # Other dots: steel blue, clearly visible but smaller
         fig_sc.update_traces(
             selector=dict(name="Other ZIP"),
             marker=dict(size=5, opacity=0.7),
@@ -434,16 +643,14 @@ with tab1:
         bar_df["ratio_pct"] = (bar_df["passive_ratio"] * 100).round(1)
         bar_df["agi_m"]     = (bar_df["avg_agi"] / 1e6).round(2)
         bar_df["zip_lbl"]   = "ZIP " + bar_df["zipcode"].astype(str)
-        bar_df = bar_df.sort_values("wealth_score")           # ascending → best at top
+        bar_df = bar_df.sort_values("wealth_score")
 
-        # Colour gradient: dark-navy → cyan → gold
         norm  = bar_df["wealth_score"]
         n_min, n_max = norm.min(), norm.max()
         bar_colors = [
             f"rgba({int(61+180*(v-n_min)/(n_max-n_min))},{int(141+80*(v-n_min)/(n_max-n_min))},{int(212-130*(v-n_min)/(n_max-n_min))},1)"
             for v in norm
         ]
-        # override top bar with gold
         bar_colors[-1] = GOLD
 
         fig_bar = go.Figure(go.Bar(
@@ -476,8 +683,6 @@ with tab1:
         st.plotly_chart(fig_bar, use_container_width=True)
 
     st.divider()
-
-    # ── Stacked Income Composition ────────────────────────────
     st.markdown(f"<h3 style='color:{TXT_WHITE};'>Income Composition — Passive vs Wages</h3>",
                 unsafe_allow_html=True)
     st.markdown(
@@ -535,12 +740,21 @@ Bars dominated by <span style='color:{GOLD}'>gold</span> are Porsche's highest-p
 
 
 # ╔══════════════════════════════════════════════════════════════
-# ║  TAB 2 — Trends 2019–2022
+# ║  TAB 2 — Phase 2: Trends & Stability
 # ╚══════════════════════════════════════════════════════════════
 with tab2:
-    st.markdown(f"<h3 style='color:{TXT_WHITE};'>Passive Wealth Trends 2019–2022</h3>",
-                unsafe_allow_html=True)
-    st.markdown("<p style='color:#3A3B50;font-size:13px;margin-top:-4px;'>Multi-year stability distinguishes resilient investment wealth from one-year spikes.</p>", unsafe_allow_html=True)
+    st.markdown(
+        f"<h3 style='color:{TXT_WHITE};'>Passive Wealth Trends 2019–2022"
+        f"<span class='phase2-badge'>Phase 2</span></h3>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f"<p style='color:#3A3B50;font-size:13px;margin-top:-4px;'>"
+        f"Multi-year stability distinguishes resilient investment wealth from one-year spikes. "
+        f"A ZIP that <em>spiked</em> in 2021 (capital gains year) vs one that <em>grew steadily</em> "
+        f"every year represents very different risk profiles for Porsche.</p>",
+        unsafe_allow_html=True
+    )
 
     trend_zips = df_agg.nlargest(top_n, "wealth_score")["zipcode"].tolist()
     trend_df   = df_yearly[df_yearly["zipcode"].isin(trend_zips)].copy()
@@ -551,8 +765,11 @@ with tab2:
     col_t1, col_t2 = st.columns(2, gap="medium")
 
     with col_t1:
-        st.markdown(f"<h4 style='color:{TXT_BODY};'>Passive Income Ratio by Year</h4>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            f"<h4 style='color:{TXT_BODY};'>📈 Passive Income Ratio by Year</h4>",
+            unsafe_allow_html=True
+        )
+        st.caption("Prioritize ZIPs with consistent upward trend, not just peak-year highs")
         fig_line = px.line(
             trend_df, x="year", y="passive_pct", color="zip_lbl", markers=True,
             labels={"passive_pct":"Passive Ratio (%)","year":"Year","zip_lbl":"ZIP"},
@@ -567,8 +784,11 @@ with tab2:
         st.plotly_chart(fig_line, use_container_width=True)
 
     with col_t2:
-        st.markdown(f"<h4 style='color:{TXT_BODY};'>AGI Growth Over Time ($k)</h4>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            f"<h4 style='color:{TXT_BODY};'>📊 AGI Growth Over Time ($k)</h4>",
+            unsafe_allow_html=True
+        )
+        st.caption("Tightly clustered lines = low variance = reliable target")
         fig_agi = px.line(
             trend_df, x="year", y="agi_k", color="zip_lbl", markers=True,
             labels={"agi_k":"Avg AGI ($k)","year":"Year","zip_lbl":"ZIP"},
@@ -583,9 +803,18 @@ with tab2:
         st.plotly_chart(fig_agi, use_container_width=True)
 
     st.divider()
-    st.markdown(f"<h3 style='color:{TXT_WHITE};'>Wealth Stability Score</h3>",
-                unsafe_allow_html=True)
-    st.markdown("<p style='color:#3A3B50;font-size:13px;margin-top:-4px;'>Bar height = mean passive ratio · Error bars = year-over-year std dev · Smaller error = more stable</p>", unsafe_allow_html=True)
+
+    st.markdown(
+        f"<h3 style='color:{TXT_WHITE};'>Wealth Stability Scoring"
+        f"<span class='phase2-badge'>Phase 2</span></h3>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        "<p style='color:#3A3B50;font-size:13px;margin-top:-4px;'>"
+        "Bar height = mean passive ratio · Error bars = year-over-year std dev · "
+        "<strong>Smaller error bar = more predictable buyer pool = lower CAC, higher LTV</strong></p>",
+        unsafe_allow_html=True
+    )
 
     vol_df = (
         df_yearly[df_yearly["zipcode"].isin(trend_zips)]
@@ -598,7 +827,6 @@ with tab2:
     vol_df["zip_lbl"]  = "ZIP " + vol_df["zipcode"].astype(str)
     vol_df = vol_df.sort_values("mean_pct", ascending=False)
 
-    # bar colour = continuous from MUTED_DOT → CYAN → GOLD
     vol_colors = []
     mn, mx = vol_df["mean_pct"].min(), vol_df["mean_pct"].max()
     for v in vol_df["mean_pct"]:
@@ -625,14 +853,15 @@ with tab2:
                    tickangle=-20, tickfont=dict(color=TXT_BODY, size=11)),
         yaxis=dict(gridcolor=GRID_CLR, ticksuffix="%",
                    title="Passive Ratio (%)",
-                                      tickfont=dict(color=TXT_BODY)),
+                   tickfont=dict(color=TXT_BODY)),
     ))
     st.plotly_chart(fig_vol, use_container_width=True)
 
     st.markdown(f"""<div class="insight-box">
 💡 <strong>Reading this chart:</strong>
 Tall bar + <em>small</em> error bar = high, stable passive wealth = prime Porsche territory.
-Tall bar + <em>large</em> error bar often reflects a one-time capital event (IPO year, property sale).
+<strong>Tall bar + large error bar</strong> often reflects a one-time capital event (IPO year, property sale).
+<strong>Small error bars = predictable buyer pool = lower CAC, higher LTV.</strong>
 Prioritise ZIPs that are consistently high, not just peak-year high.
 </div>""", unsafe_allow_html=True)
 
@@ -660,9 +889,22 @@ with tab3:
             f"<p style='color:#3A3B50;font-size:13px;'>"
             f"Showing <strong style='color:#1A1B2E;'>{len(map_df)} ZIPs</strong> with verified coordinates. "
             f"Install <code style='background:#1A1B24;color:#3DD8F5;padding:1px 5px;border-radius:3px;'>pgeocode</code>"
-            f" (see app.py comments) to map all 27,747 ZIPs.</p>",
+            f" to map all 27,747 ZIPs.</p>",
             unsafe_allow_html=True
         )
+
+        # ── Colour legend for map (improved visibility) ─────────
+        st.markdown(
+            f"<div style='display:flex;gap:20px;align-items:center;margin-bottom:8px;'>"
+            f"<span><span class='legend-pill' style='background:{GOLD};width:18px;height:18px;border-radius:50%;'></span>"
+            f"<strong style='color:{TXT_BODY};font-size:13px;'> 🎯 Target ZIP</strong> — passes all filters</span>"
+            f"<span><span class='legend-pill' style='background:#2E86AB;width:18px;height:18px;border-radius:50%;'></span>"
+            f"<span style='color:{TXT_BODY};font-size:13px;'> Other ZIP</span></span>"
+            f"<span style='color:{TXT_MUTED};font-size:12px;'>Bubble size = passive income %</span>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
         fig_map = px.scatter_mapbox(
             map_df, lat="lat", lon="lon",
             size="passive_pct", color="target_label",
@@ -676,16 +918,63 @@ with tab3:
         fig_map.update_layout(
             paper_bgcolor=PAPER_BG,
             font=dict(color=TXT_BODY),
-            legend=dict(bgcolor=BG_SURFACE, bordercolor=BG_BORDER, borderwidth=1,
-                        font=dict(color=TXT_BODY)),
+            legend=dict(bgcolor=BG_SURFACE, bordercolor=GOLD, borderwidth=2,
+                        font=dict(color=TXT_BODY, size=13),
+                        title=dict(text="ZIP Category", font=dict(color=TXT_WHITE, size=12))),
             margin=dict(l=0, r=0, t=0, b=0),
-            mapbox=dict(
-                center=dict(lat=39.5, lon=-98.35),
-                zoom=3,
-                style="open-street-map",
-            ),
+            mapbox=dict(center=dict(lat=39.5, lon=-98.35), zoom=3, style="open-street-map"),
         )
         st.plotly_chart(fig_map, use_container_width=True)
+
+        # ── AI "Why this ZIP?" panel ─────────────────────────────
+        st.markdown(f"<h4 style='color:{TXT_BODY};'>🤖 Why this ZIP? <span class='ai-badge'>AI</span></h4>",
+                    unsafe_allow_html=True)
+        target_zips_list = map_df[map_df["is_target"]]["zipcode"].tolist()
+        if target_zips_list:
+            selected_zip_map = st.selectbox(
+                "Select a target ZIP to get AI rationale",
+                options=target_zips_list,
+                format_func=lambda z: f"ZIP {z}",
+                key="map_zip_selector"
+            )
+            if st.button("Generate ZIP Analysis 🤖", key="btn_zip_analysis"):
+                if not ANTHROPIC_API_KEY:
+                    st.warning("⚠️ Enter your Anthropic API key in the sidebar to enable AI features.")
+                else:
+                    zip_row = df_agg[df_agg["zipcode"] == selected_zip_map].iloc[0]
+                    prompt = f"""
+Analyze this ZIP code for Porsche dealership potential:
+
+ZIP: {selected_zip_map}
+Avg AGI: ${zip_row['avg_agi']:,.0f}
+Passive Ratio: {zip_row['passive_ratio']*100:.1f}%
+Wage Ratio: {zip_row['wage_ratio']*100:.1f}%
+Wealth Score: {zip_row['wealth_score']:.4f}
+Total Interest: ${zip_row['total_interest']:,.0f}
+Total Dividends: ${zip_row['total_dividends']:,.0f}
+Total Cap Gains: ${zip_row['total_capgains']:,.0f}
+Stability Score: {zip_row.get('stability_score', 'N/A')}
+
+Give a 3–4 sentence executive recommendation on whether this ZIP is a strong Porsche dealership target.
+Be specific about the wealth drivers and buyer profile. Be concise and executive-ready.
+"""
+                    with st.spinner("Analyzing ZIP with Claude…"):
+                        try:
+                            rationale = get_claude_response(
+                                ANTHROPIC_API_KEY,
+                                prompt=prompt,
+                                system=(
+                                    "You are a luxury automotive site selection analyst for Porsche. "
+                                    "Given ZIP code wealth data, provide a 3-4 sentence strategic rationale. "
+                                    "Be specific about wealth drivers and buyer profile. Be concise and executive-ready."
+                                )
+                            )
+                            st.markdown(
+                                f"<div class='chat-ai'>🤖 <strong>AI Analysis — ZIP {selected_zip_map}</strong><br><br>{rationale}</div>",
+                                unsafe_allow_html=True
+                            )
+                        except Exception as e:
+                            st.error(f"AI error: {e}")
 
     else:
         def zip_to_state(z):
@@ -741,8 +1030,7 @@ with tab3:
 
     st.markdown(f"""<div class="insight-box">
 📍 <strong>Map accuracy:</strong>
-The original app used <code>np.random.seed(42)</code> + random offsets — every dot was in the
-<em>wrong place</em>. This version uses verified real-world ZIP centroids.
+This version uses verified real-world ZIP centroids.
 Add <code>pgeocode</code> to requirements.txt for full 27k-ZIP accurate mapping.
 </div>""", unsafe_allow_html=True)
 
@@ -765,16 +1053,17 @@ with tab4:
     else:
         display = targets.head(50)[[
             "zipcode","avg_agi","passive_ratio","wage_ratio",
-            "wealth_score","total_interest","total_dividends","total_capgains"
+            "wealth_score","stability_score","total_interest","total_dividends","total_capgains"
         ]].copy()
         display.columns = [
             "ZIP Code","Avg AGI ($)","Passive Ratio","Wage Ratio",
-            "Wealth Score","Total Interest","Total Dividends","Total Cap Gains"
+            "Wealth Score","Stability Score","Total Interest","Total Dividends","Total Cap Gains"
         ]
         display["Avg AGI ($)"]     = display["Avg AGI ($)"].apply(lambda v: f"${v:,.0f}")
         display["Passive Ratio"]   = display["Passive Ratio"].apply(lambda v: f"{v*100:.1f}%")
         display["Wage Ratio"]      = display["Wage Ratio"].apply(lambda v: f"{v*100:.1f}%")
         display["Wealth Score"]    = display["Wealth Score"].apply(lambda v: f"{v:.4f}")
+        display["Stability Score"] = display["Stability Score"].apply(lambda v: f"{v:.4f}" if pd.notna(v) else "N/A")
         display["Total Interest"]  = display["Total Interest"].apply(lambda v: f"${v:,.0f}")
         display["Total Dividends"] = display["Total Dividends"].apply(lambda v: f"${v:,.0f}")
         display["Total Cap Gains"] = display["Total Cap Gains"].apply(lambda v: f"${v:,.0f}")
@@ -838,6 +1127,331 @@ higher spending volatility. <span style='color:{CYAN}'>Interest-heavy</span> ZIP
 wealth — typically older, stable buyers who prefer conservative luxury.
 </div>""", unsafe_allow_html=True)
 
+
+# ╔══════════════════════════════════════════════════════════════
+# ║  TAB 5 — 🤖 AI Analyst  (Natural Language Query Interface)
+# ╚══════════════════════════════════════════════════════════════
+with tab5:
+    st.markdown(
+        f"<h3 style='color:{TXT_WHITE};'>🤖 AI Wealth Analyst"
+        f"<span class='ai-badge'>Claude Sonnet</span></h3>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f"<p style='color:#3A3B50;font-size:13px;margin-top:-4px;'>"
+        f"Ask natural language questions about the IRS wealth data. Claude receives the top 50 ZIPs as "
+        f"context and returns strategic site selection recommendations with ZIP rankings and rationale.</p>",
+        unsafe_allow_html=True
+    )
+
+    if not ANTHROPIC_API_KEY:
+        st.warning("⚠️ Enter your Anthropic API key in the sidebar to enable AI features.")
+    else:
+        # ── Build system context from df_agg top 50 ───────────────
+        top50 = df_agg.nlargest(50, "wealth_score")[[
+            "zipcode","avg_agi","passive_ratio","wage_ratio","wealth_score",
+            "stability_score","total_interest","total_dividends","total_capgains","is_target"
+        ]].copy()
+        top50["avg_agi_k"]          = (top50["avg_agi"] / 1000).round(1)
+        top50["passive_ratio_pct"]  = (top50["passive_ratio"] * 100).round(2)
+        top50["wage_ratio_pct"]     = (top50["wage_ratio"] * 100).round(2)
+        top50_json = top50[[
+            "zipcode","avg_agi_k","passive_ratio_pct","wage_ratio_pct",
+            "wealth_score","stability_score","total_interest","total_dividends","total_capgains","is_target"
+        ]].to_dict("records")
+
+        SYSTEM_PROMPT = f"""You are a strategic wealth intelligence analyst for Porsche's site selection committee.
+
+You have access to IRS Statistics of Income ZIP Code Data (2019–2022) aggregated across 27,747 ZIP codes.
+Below is a JSON snapshot of the top 50 ZIP codes ranked by composite wealth score (passive ratio × 50% + AGI norm × 50%):
+
+{json.dumps(top50_json, indent=2)}
+
+Field definitions:
+- zipcode: US ZIP code
+- avg_agi_k: Average Adjusted Gross Income in $thousands (4-year mean 2019-2022)
+- passive_ratio_pct: % of AGI from interest + dividends + capital gains
+- wage_ratio_pct: % of AGI from wages & salaries
+- wealth_score: composite score (higher = better Porsche target)
+- stability_score: passive ratio mean / (1 + std dev) — higher = more consistent wealth
+- total_interest / total_dividends / total_capgains: 4-year aggregate dollar amounts
+- is_target: meets current filter thresholds (passive_ratio >= {passive_threshold}%, avg_agi >= ${agi_threshold}k)
+
+Current dashboard filters:
+- Minimum passive ratio: {passive_threshold}%
+- Minimum avg AGI: ${agi_threshold:,}k
+
+When answering:
+1. Always cite specific ZIP codes with their data
+2. Rank your recommendations clearly
+3. Flag any stability/volatility concerns
+4. Keep responses structured and executive-ready
+5. Reference wealth drivers (dividend-heavy = old money, capital-gains-heavy = tech wealth, interest-heavy = bond/CD wealth)"""
+
+        # ── Example prompt starters ───────────────────────────────
+        st.markdown(f"<p style='color:{TXT_MUTED};font-size:13px;font-weight:600;'>💡 Try asking:</p>",
+                    unsafe_allow_html=True)
+
+        example_prompts = [
+            "Which ZIP codes have the highest dividend income stability?",
+            "Compare ZIP 94027 vs 10021 — which is the better Porsche market?",
+            "Find emerging wealth ZIPs with AGI under $500k but high passive ratio",
+            "Which ZIPs have volatile wealth that might be risky for Porsche?",
+            "What are the top 3 ZIPs for opening a flagship Porsche dealership?",
+        ]
+
+        cols = st.columns(len(example_prompts))
+        for i, (col, prompt) in enumerate(zip(cols, example_prompts)):
+            if col.button(f"💬 {prompt[:35]}…" if len(prompt) > 35 else f"💬 {prompt}",
+                          key=f"starter_{i}", use_container_width=True):
+                st.session_state.chat_history.append({"role": "user", "content": prompt})
+                st.rerun()
+
+        st.divider()
+
+        # ── Chat history display ──────────────────────────────────
+        chat_container = st.container()
+        with chat_container:
+            for msg in st.session_state.chat_history:
+                if msg["role"] == "user":
+                    st.markdown(
+                        f"<div class='chat-user'>👤 <strong>You</strong><br>{msg['content']}</div>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    formatted = msg["content"].replace("\n", "<br>")
+                    st.markdown(
+                        f"<div class='chat-ai'>🤖 <strong>Claude</strong><br><br>{formatted}</div>",
+                        unsafe_allow_html=True
+                    )
+
+        # ── Chat input and send logic ────────────────────────────
+        user_input = st.chat_input("Ask about ZIP code wealth patterns, market comparisons, or site recommendations…")
+
+        # Process any pending user messages (from starters or chat_input)
+        needs_response = (
+            len(st.session_state.chat_history) > 0 and
+            st.session_state.chat_history[-1]["role"] == "user"
+        )
+
+        if user_input:
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            needs_response = True
+
+        if needs_response and st.session_state.chat_history[-1]["role"] == "user":
+            with st.spinner("🤖 Claude is analyzing the wealth data…"):
+                try:
+                    last_msg = st.session_state.chat_history[-1]["content"]
+                    ai_reply = get_claude_response(
+                        ANTHROPIC_API_KEY,
+                        prompt=last_msg,
+                        system=SYSTEM_PROMPT
+                    )
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": ai_reply
+                    })
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ API Error: {e}")
+
+        # ── Clear chat button ─────────────────────────────────────
+        if st.session_state.chat_history:
+            if st.button("🗑️ Clear conversation", key="clear_chat"):
+                st.session_state.chat_history = []
+                st.rerun()
+
+
+# ╔══════════════════════════════════════════════════════════════
+# ║  TAB 6 — 📄 Site Selection Report Generator
+# ╚══════════════════════════════════════════════════════════════
+with tab6:
+    st.markdown(
+        f"<h3 style='color:{TXT_WHITE};'>📄 AI Site Selection Report Generator"
+        f"<span class='ai-badge'>Claude Sonnet</span></h3>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f"<p style='color:#3A3B50;font-size:13px;margin-top:-4px;'>"
+        f"Generate a professional Porsche dealership site selection memo — authored by Claude — "
+        f"covering your top target ZIPs, wealth drivers, risk flags, and strategic recommendation. "
+        f"Download as HTML for print/PDF.</p>",
+        unsafe_allow_html=True
+    )
+
+    if not ANTHROPIC_API_KEY:
+        st.warning("⚠️ Enter your Anthropic API key in the sidebar to enable AI features.")
+    else:
+        # ── Report config options ─────────────────────────────────
+        col_rc1, col_rc2 = st.columns(2)
+        with col_rc1:
+            report_top_n = st.number_input("Number of ZIPs to analyze", min_value=3, max_value=10, value=5)
+            report_focus = st.selectbox(
+                "Report focus",
+                ["Balanced (passive ratio + AGI)", "Stability-first (low volatility)", "High AGI only"]
+            )
+        with col_rc2:
+            report_region = st.text_input("Target region (optional)", placeholder="e.g. Southeast, Florida, NYC metro")
+            report_committee = st.text_input("Committee/Recipient name", value="Porsche Site Selection Committee")
+
+        generate_btn = st.button("🚀 Generate AI Report", type="primary", use_container_width=True, key="gen_report_btn")
+
+        if generate_btn or st.session_state.report_generated:
+            if generate_btn:
+                st.session_state.report_generated = False
+                st.session_state.report_content = None
+
+            if generate_btn:
+                # ── Build context for Claude ──────────────────────
+                if report_focus == "Stability-first (low volatility)":
+                    sort_col = "stability_score"
+                elif report_focus == "High AGI only":
+                    sort_col = "avg_agi"
+                else:
+                    sort_col = "wealth_score"
+
+                report_targets_df = df_agg[df_agg["is_target"]].nlargest(int(report_top_n), sort_col)
+                if len(report_targets_df) == 0:
+                    report_targets_df = df_agg.nlargest(int(report_top_n), sort_col)
+
+                # ── Yearly trend for top ZIPs ─────────────────────
+                report_zip_list = report_targets_df["zipcode"].tolist()
+                trend_data = df_yearly[df_yearly["zipcode"].isin(report_zip_list)].copy()
+                trend_summary = {}
+                for z in report_zip_list:
+                    zdf = trend_data[trend_data["zipcode"] == z].sort_values("year")
+                    if len(zdf) > 0:
+                        trend_summary[str(z)] = {
+                            yr: f"${row.a00100/1000:,.0f}k AGI, {row.passive_ratio*100:.1f}% passive"
+                            for yr, row in zip(zdf["year"], zdf.itertuples())
+                        }
+
+                zip_data_for_report = []
+                for _, row in report_targets_df.iterrows():
+                    zip_data_for_report.append({
+                        "zipcode": int(row["zipcode"]),
+                        "avg_agi": f"${row['avg_agi']:,.0f}",
+                        "passive_ratio": f"{row['passive_ratio']*100:.1f}%",
+                        "wage_ratio": f"{row['wage_ratio']*100:.1f}%",
+                        "wealth_score": round(float(row["wealth_score"]), 4),
+                        "stability_score": round(float(row.get("stability_score", 0)), 4),
+                        "total_interest": f"${row['total_interest']:,.0f}",
+                        "total_dividends": f"${row['total_dividends']:,.0f}",
+                        "total_capgains": f"${row['total_capgains']:,.0f}",
+                        "yearly_trend": trend_summary.get(str(int(row["zipcode"])), {}),
+                    })
+
+                report_prompt = f"""Write a professional Porsche dealership site selection executive memo.
+
+RECIPIENT: {report_committee}
+DATE: {datetime.date.today().strftime("%B %d, %Y")}
+FOCUS: {report_focus}
+{"REGION FILTER: " + report_region if report_region else "REGION: National"}
+
+DATA — Top {report_top_n} target ZIP codes:
+{json.dumps(zip_data_for_report, indent=2)}
+
+Write a structured memo with these exact sections:
+1. **Executive Summary** (2-3 sentences on the key finding)
+2. **Top {report_top_n} Target ZIP Code Rankings** (ranked list with brief rationale for each ZIP, noting wealth driver type: dividend-old-money / capital-gains-tech / interest-bond)
+3. **Wealth Stability Analysis** (identify which ZIPs have consistent vs volatile passive income, flag risk ZIPs)
+4. **Risk Flags** (any ZIPs with high wealth_score but low stability_score, or extremely high capital gains suggesting one-time events)
+5. **Strategic Recommendation** (1-2 sentence executive recommendation on which ZIP cluster to prioritize for dealership placement)
+
+Style: Professional, data-driven, executive-ready. Use dollar signs and percentages from the data. Be decisive."""
+
+                with st.spinner("✍️ Claude is writing your site selection memo…"):
+                    try:
+                        report_text = get_claude_response(
+                            ANTHROPIC_API_KEY,
+                            prompt=report_prompt,
+                            system=(
+                                "You are a senior Porsche strategic advisor writing executive memos "
+                                "for the dealership site selection committee. Write in a precise, "
+                                "authoritative, data-driven style. Use markdown formatting."
+                            )
+                        )
+                        st.session_state.report_content = report_text
+                        st.session_state.report_generated = True
+                    except Exception as e:
+                        st.error(f"❌ Report generation error: {e}")
+
+            # ── Display report ────────────────────────────────────
+            if st.session_state.report_content:
+                report_md = st.session_state.report_content
+                st.markdown(f"<div class='report-card'>{report_md}</div>", unsafe_allow_html=True)
+
+                st.divider()
+                col_dl1, col_dl2 = st.columns(2)
+
+                # ── HTML download (always available) ─────────────
+                report_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Porsche Site Selection Report — {datetime.date.today()}</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 32px; color: #1A1B2E; line-height: 1.8; }}
+  h1 {{ color: #B8860B; border-bottom: 3px solid #E5B94E; padding-bottom: 10px; }}
+  h2 {{ color: #9A6E00; margin-top: 32px; border-left: 4px solid #E5B94E; padding-left: 12px; }}
+  h3 {{ color: #1A1B2E; }}
+  .header {{ background: linear-gradient(135deg, #1A1B2E 0%, #2D2E4A 100%); color: white; padding: 28px 32px; border-radius: 12px; margin-bottom: 32px; }}
+  .header h1 {{ color: #E5B94E; border: none; margin: 0; }}
+  .header p {{ color: rgba(255,255,255,0.7); margin: 4px 0 0 0; font-size: 14px; }}
+  .footer {{ color: #6B6C80; font-size: 12px; text-align: center; margin-top: 48px; padding-top: 16px; border-top: 1px solid #D4D5E0; }}
+  @media print {{ body {{ margin: 20px; }} }}
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>🏎️ Porsche Dealership Site Selection Memo</h1>
+    <p>Prepared by: AI Wealth Intelligence Analyst · {datetime.date.today().strftime("%B %d, %Y")}</p>
+    <p>Recipient: {report_committee} · Data: IRS SOI ZIP Code Data 2019–2022</p>
+  </div>
+  <div id="content">
+    {report_md.replace(chr(10), '<br>').replace('**', '<strong>').replace('##', '<h2>').replace('#', '<h3>')}
+  </div>
+  <div class="footer">
+    Porsche Site Selection Dashboard — Team 6 · IRS Statistics of Income ZIP Code Data 2019–2022<br>
+    Generated: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")} · Confidential — Internal Use Only
+  </div>
+</body>
+</html>"""
+
+                with col_dl1:
+                    st.download_button(
+                        label="⬇️ Download Report (HTML)",
+                        data=report_html,
+                        file_name=f"porsche_site_selection_{datetime.date.today()}.html",
+                        mime="text/html",
+                        use_container_width=True,
+                    )
+
+                # ── PDF via pdfkit (if available) ─────────────────
+                with col_dl2:
+                    try:
+                        import pdfkit
+                        pdf_bytes = pdfkit.from_string(report_html, False)
+                        st.download_button(
+                            label="⬇️ Download Report (PDF)",
+                            data=pdf_bytes,
+                            file_name=f"porsche_site_selection_{datetime.date.today()}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                        )
+                    except Exception:
+                        st.info(
+                            "💡 **PDF download**: Install `wkhtmltopdf` for PDF export: "
+                            "`brew install wkhtmltopdf`. HTML download available above."
+                        )
+
+                if st.button("🔄 Generate New Report", key="regen_report"):
+                    st.session_state.report_content = None
+                    st.session_state.report_generated = False
+                    st.rerun()
+
+
 # ══════════════════════════════════════════════════════════════
 #  FOOTER
 # ══════════════════════════════════════════════════════════════
@@ -845,6 +1459,7 @@ st.divider()
 st.markdown(
     f"<p style='color:{TXT_MUTED};font-size:12px;text-align:center;'>"
     "Data: IRS Statistics of Income ZIP Code Data (2019–2022) · "
-    "Porsche Site Selection Committee — Team 6</p>",
+    "Porsche Site Selection Committee — Team 6 · "
+    "AI: Claude Sonnet via Google AI API</p>",
     unsafe_allow_html=True,
 )
