@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
 import json
 import os
@@ -608,22 +607,19 @@ with tab1:
             sc[~sc["is_target"]].sample(min(2000, (~sc["is_target"]).sum()), random_state=42),
         ])
 
-        fig_sc = px.scatter(
-            plot_df, x="ratio_pct", y="agi_k",
-            color="category",
-            color_discrete_map={"Target ZIP": GOLD, "Other ZIP": MUTED_DOT},
-            hover_data={"zipcode":True,"ratio_pct":":.1f","agi_k":":,.0f","category":False},
-            labels={"ratio_pct":"Passive Ratio (%)","agi_k":"Avg AGI ($k)","zipcode":"ZIP"},
-        )
-        fig_sc.update_traces(
-            selector=dict(name="Target ZIP"),
-            marker=dict(size=10, opacity=1.0,
-                        line=dict(width=1.5, color="rgba(255,255,255,0.6)")),
-        )
-        fig_sc.update_traces(
-            selector=dict(name="Other ZIP"),
-            marker=dict(size=5, opacity=0.7),
-        )
+        fig_sc = go.Figure()
+        for cat, clr, sz, op in [("Target ZIP", GOLD, 10, 1.0), ("Other ZIP", MUTED_DOT, 5, 0.7)]:
+            df_cat = plot_df[plot_df["category"] == cat]
+            fig_sc.add_trace(go.Scatter(
+                x=df_cat["ratio_pct"], y=df_cat["agi_k"],
+                mode="markers",
+                name=cat,
+                marker=dict(color=clr, size=sz, opacity=op,
+                            line=dict(width=1.5 if cat=="Target ZIP" else 0,
+                                      color="rgba(255,255,255,0.6)")),
+                customdata=df_cat[["zipcode","ratio_pct","agi_k"]].values,
+                hovertemplate="ZIP %{customdata[0]}<br>Passive: %{customdata[1]:.1f}%<br>AGI: $%{customdata[2]:,.0f}k<extra></extra>",
+            ))
         fig_sc.add_vline(x=passive_threshold, line_dash="dot", line_color=GOLD, line_width=1.5,
                          annotation_text=f"  {passive_threshold}% threshold",
                          annotation_font=dict(color=GOLD, size=11))
@@ -770,12 +766,14 @@ with tab2:
             unsafe_allow_html=True
         )
         st.caption("Prioritize ZIPs with consistent upward trend, not just peak-year highs")
-        fig_line = px.line(
-            trend_df, x="year", y="passive_pct", color="zip_lbl", markers=True,
-            labels={"passive_pct":"Passive Ratio (%)","year":"Year","zip_lbl":"ZIP"},
-            color_discrete_sequence=QUALITATIVE,
-        )
-        fig_line.update_traces(line=dict(width=2.5), marker=dict(size=7))
+        fig_line = go.Figure()
+        for i, (zip_lbl, grp) in enumerate(trend_df.groupby("zip_lbl")):
+            fig_line.add_trace(go.Scatter(
+                x=grp["year"], y=grp["passive_pct"],
+                mode="lines+markers", name=zip_lbl,
+                line=dict(width=2.5, color=QUALITATIVE[i % len(QUALITATIVE)]),
+                marker=dict(size=7),
+            ))
         fig_line.update_layout(**base_layout(
             height=380,
             xaxis=dict(gridcolor=GRID_CLR, dtick=1, tickfont=dict(color=TXT_BODY)),
@@ -789,11 +787,14 @@ with tab2:
             unsafe_allow_html=True
         )
         st.caption("Tightly clustered lines = low variance = reliable target")
-        fig_agi = px.line(
-            trend_df, x="year", y="agi_k", color="zip_lbl", markers=True,
-            labels={"agi_k":"Avg AGI ($k)","year":"Year","zip_lbl":"ZIP"},
-            color_discrete_sequence=QUALITATIVE,
-        )
+        fig_agi = go.Figure()
+        for i, (zip_lbl, grp) in enumerate(trend_df.groupby("zip_lbl")):
+            fig_agi.add_trace(go.Scatter(
+                x=grp["year"], y=grp["agi_k"],
+                mode="lines+markers", name=zip_lbl,
+                line=dict(width=2.5, color=QUALITATIVE[i % len(QUALITATIVE)]),
+                marker=dict(size=7),
+            ))
         fig_agi.update_traces(line=dict(width=2.5), marker=dict(size=7))
         fig_agi.update_layout(**base_layout(
             height=380,
@@ -905,16 +906,19 @@ with tab3:
             unsafe_allow_html=True
         )
 
-        fig_map = px.scatter_mapbox(
-            map_df, lat="lat", lon="lon",
-            size="passive_pct", color="target_label",
-            color_discrete_map={"🎯 Target": GOLD, "Other": "#2E86AB"},
-            hover_data={"zipcode":True,"passive_pct":":.1f","agi_m":":.2f",
-                        "lat":False,"lon":False},
-            labels={"passive_pct":"Passive %","agi_m":"Avg AGI $M","target_label":"Category"},
-            zoom=3, height=580, size_max=32,
-            mapbox_style="open-street-map",
-        )
+        fig_map = go.Figure()
+        for cat, clr in [("🎯 Target", GOLD), ("Other", "#2E86AB")]:
+            df_cat = map_df[map_df["target_label"] == cat]
+            fig_map.add_trace(go.Scattermapbox(
+                lat=df_cat["lat"], lon=df_cat["lon"],
+                mode="markers", name=cat,
+                marker=dict(
+                    size=df_cat["passive_pct"] / 2,
+                    color=clr, opacity=0.8, sizemin=4,
+                ),
+                customdata=df_cat[["zipcode","passive_pct","agi_m"]].values,
+                hovertemplate="ZIP %{customdata[0]}<br>Passive: %{customdata[1]:.1f}%<br>AGI: $%{customdata[2]:.2f}M<extra></extra>",
+            ))
         fig_map.update_layout(
             paper_bgcolor=PAPER_BG,
             font=dict(color=TXT_BODY),
@@ -1004,20 +1008,20 @@ Be specific about the wealth drivers and buyer profile. Be concise and executive
         st_sum["passive_pct"] = (st_sum["mean_passive"] * 100).round(2)
         st_sum = st_sum.sort_values("passive_pct", ascending=False)
 
-        fig_st = px.bar(
-            st_sum, x="state", y="passive_pct",
-            color="passive_pct",
-            color_continuous_scale=[[0,"#1A1B24"],[0.35,CYAN],[0.7,VIOLET],[1.0,GOLD]],
+        fig_st = go.Figure(go.Bar(
+            x=st_sum["state"], y=st_sum["passive_pct"],
             text=st_sum["passive_pct"].apply(lambda v: f"{v:.1f}%"),
-            labels={"passive_pct":"Avg Passive Ratio (%)","state":"State"},
-            hover_data={"target_zips":True,"zip_count":True},
-            height=430,
-        )
-        fig_st.update_traces(
             textposition="outside",
             textfont=dict(color=TXT_BODY, size=10),
-            marker_line_width=0,
-        )
+            marker=dict(
+                color=st_sum["passive_pct"],
+                colorscale=[[0,"#1A1B24"],[0.35,CYAN],[0.7,VIOLET],[1.0,GOLD]],
+                showscale=False,
+                line=dict(width=0),
+            ),
+            customdata=st_sum[["target_zips","zip_count"]].values,
+            hovertemplate="%{x}<br>Passive: %{y:.1f}%<br>Target ZIPs: %{customdata[0]}<br>Total ZIPs: %{customdata[1]}<extra></extra>",
+        ))
         fig_st.update_layout(**base_layout(
             height=430,
             coloraxis_showscale=False,
@@ -1091,22 +1095,17 @@ with tab4:
             "total_capgains":  "Capital Gains",
         })
 
-        fig_comp = px.bar(
-            top5, x="ZIP", y="Amount_M", color="Source", barmode="group",
-            color_discrete_map={
-                "Interest":     CYAN,
-                "Dividends":    VIOLET,
-                "Capital Gains":GOLD,
-            },
-            text=top5["Amount_M"].apply(lambda v: f"${v:.1f}M"),
-            labels={"Amount_M":"4-year total ($M)","ZIP":"ZIP Code"},
-            height=360,
-        )
-        fig_comp.update_traces(
-            textposition="outside",
-            textfont=dict(color=TXT_BODY, size=10),
-            marker_line_width=0,
-        )
+        fig_comp = go.Figure()
+        for src, clr in [("Interest", CYAN), ("Dividends", VIOLET), ("Capital Gains", GOLD)]:
+            df_src = top5[top5["Source"] == src]
+            fig_comp.add_trace(go.Bar(
+                x=df_src["ZIP"], y=df_src["Amount_M"],
+                name=src, marker_color=clr,
+                text=df_src["Amount_M"].apply(lambda v: f"${v:.1f}M"),
+                textposition="outside",
+                textfont=dict(color=TXT_BODY, size=10),
+                marker_line_width=0,
+            ))
         fig_comp.update_layout(**base_layout(
             height=360,
             xaxis=dict(type="category", gridcolor="rgba(0,0,0,0)",
